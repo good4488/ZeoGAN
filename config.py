@@ -57,6 +57,8 @@ def make_esgan_arg_parser():
     parser.add_argument("--train_gen_per_disc", type=int, required=True)
     parser.add_argument("--n_critics", type=int, required=True)
     parser.add_argument("--gp_lambda", type=float, required=True)
+    parser.add_argument("--user_desired", type=str2bool, required=True)
+    parser.add_argument("--user_range", type=float, nargs=2, required=True)
     parser.add_argument("--device", type=str, required=True)
 
     # Optional arguments

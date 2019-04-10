@@ -100,7 +100,7 @@ class Generator:
 
         self.outputs = x
 
-
+# Critic
 class Discriminator:
     """Calculate the probability that given grid data is an energy grid."""
     def __init__(self, *,
@@ -207,7 +207,9 @@ class ESGAN:
             in_temper,
             feature_matching,
             n_critics,
-            gp_lambda):
+            gp_lambda,
+            user_desired,
+            user_range):
 
         try:
             os.makedirs(logdir)
@@ -226,6 +228,9 @@ class ESGAN:
 
         self.n_critics = n_critics
         self.gp_lambda = gp_lambda
+
+        self.user_desired = user_desired
+        self.user_range = user_range
 
         self.dataset = dataset
         # Make iterator from the dataset.
@@ -303,7 +308,6 @@ class ESGAN:
         g_vars = [v for v in train_vars if v.name.startswith("generator/")]
 
         # Loss function parameters.
-        one_side_label = 0.8
         weight_cell_real = 1.0
         weight_cell_fake = 0.1
 
@@ -497,45 +501,37 @@ class ESGAN:
 
 
         with tf.variable_scope("loss/gen"):
-            # USER-DESIRED
-            lower, upper = self.dataset.energy_scale
-            fake_user = self.generator.outputs[:, :, :, :, 0:1]
-            if self.dataset.invert:
-                fake_user = 1.0 - fake_user
-            fake_user = (upper-lower) * fake_user + lower
-
-            # USER-DESIRED-KH
-            #kh_boltz = tf.math.exp(-fake_user / 298.0)
-            #kh_batch = tf.reduce_mean(kh_boltz, axis = [1,2,3,4])
-            #kh_batch = tf.log(kh_batch)
-
-            # USER-DESIRED-VF
-            #vf_sum = tf.reduce_mean(tf.nn.sigmoid(4470.0 - fake_user),
-            #                        axis=[1,2,3,4],
-            #                        )
-            #vf_batch = tf.log(vf_sum)
-
-            # USER-DESIRED-HoA
-            kh_boltz = tf.math.exp(-fake_user / 298.0)
-            hoa_boltz = tf.multiply(kh_boltz, fake_user)
-
-            kh_batch = tf.reduce_mean(kh_boltz, axis = [1,2,3,4])
-            hoa_batch = tf.reduce_mean(hoa_boltz, axis = [1,2,3,4])
-
-            hoa = -tf.div(hoa_batch, kh_batch) + 298.0
-            hoa = hoa * 8.314472 / 1000.0
-            #unit : kJ/mol
-            hoa = tf.log(hoa)
-
-            a = np.log(18.0)
-            b = np.log(22.0)
-            user_loss = smooth_square(hoa, lower=a, upper=b)
-            user_loss = tf.reduce_mean(user_loss)
-            user_loss *= 100.0
-
             g_loss = -fake_loss
             g_total_loss = g_loss + weight_cell_fake*fake_c_loss
-            g_total_loss += user_loss
+
+            if self.user_desired:
+                # Change energy scale [0, 1] to [lower, upper]
+                lower, upper = self.dataset.energy_scale
+                fake_user = self.generator.outputs[:, :, :, :, 0:1]
+                if self.dataset.invert:
+                    fake_user = 1.0 - fake_user
+                fake_user = (upper-lower) * fake_user + lower
+
+                # User-desired-HoA(Qst)
+                kh_boltz = tf.math.exp(-fake_user / 298.0)
+                hoa_boltz = tf.multiply(kh_boltz, fake_user)
+
+                kh_batch = tf.reduce_mean(kh_boltz, axis = [1,2,3,4])
+                hoa_batch = tf.reduce_mean(hoa_boltz, axis = [1,2,3,4])
+
+                hoa = -tf.div(hoa_batch, kh_batch) + 298.0
+                # unit : kJ/mol
+                hoa = hoa * 8.314472 / 1000.0
+                hoa = tf.log(hoa)
+
+                a, b = self.user_range
+                a = np.log(a)
+                b = np.log(b)
+                user_loss = smooth_square(hoa, lower=a, upper=b)
+                user_loss = tf.reduce_mean(user_loss)
+                user_loss *= 100.0
+
+                g_total_loss += user_loss
 
 
             if self.feature_matching:
@@ -597,8 +593,9 @@ class ESGAN:
                 tf.summary.scalar("g_fake_c_loss", fake_c_loss),
                 tf.summary.scalar("g_fake_c_abs_diff", fake_c_abs_diff),
                 tf.summary.scalar("g_sio2_ratio", si_o_ratio),
-                tf.summary.scalar("g_user_loss", user_loss),
             ]
+            if self.user_desired:
+                g_summaries += [tf.summary.scalar("g_user_loss", user_loss)]
 
         with tf.name_scope("histogram_summaries"):
             d_moving_vars = [
@@ -749,20 +746,19 @@ class ESGAN:
                 print("Stop generation")
                 return
 
-            size = self.batch_size
+            save_every = 100
+            batch_size = self.batch_size
+            n_iters = math.ceil(n_samples / batch_size)
 
+            bulk_cells = np.zeros([save_every*batch_size, 3], dtype=np.float32)
+            bulk_samples = np.zeros([save_every*batch_size, 32, 32, 32, 3], dtype=np.float32)
             idx = 0
 
-            # for VF
-            # ---------------------------------
-            lower, upper = self.dataset.energy_scale
-            grid_size = self.size**3
-            # ---------------------------------
+            for i in range(n_iters):
+                #if i % save_every == 0:
+                print("... Generating {:d}".format(i * batch_size))
 
-            #n_iters = math.ceil(n_samples / size)
-            #for i in range(n_iters):
-            while (idx < n_samples):
-                print("... Generating {:d}".format(idx))
+                index = i % save_every
 
                 fetches = [
                     self.generator.c_outputs,
@@ -776,37 +772,26 @@ class ESGAN:
                     feed_dict=feed_dict,
                 )
 
+                start = index * batch_size
+                end = (index + 1) * batch_size
 
-                # Generate energy grid samples
-                for cell, sample in zip(cells, samples):
-                    grid = np.array(sample[..., 0])
-                    # check VF
-                    energy_sample = (upper-lower)*grid + lower
-                    if self.dataset.invert:
-                        energy_sample = (upper-lower)*(1.0 - grid) + lower
-                    vf = np.sum(energy_sample < 4470.0, dtype=np.float32)
-                    vf = vf / grid_size
+                bulk_cells[start:end, ...] = cells
+                bulk_samples[start:end, ...] = samples
 
-                    # cell param
-                    cmin, cmax = self.dataset.cell_length_scale
-                    test_cell = (cmax-cmin)*cell + cmin
-
-                    if vf > -0.1:
-                        if all([lattice < 160.0 for lattice in test_cell]):
-                            stem = "ann_{}".format(idx)
-                            self.dataset.write_sample(
-                                cell=cell,
-                                grid=sample,
-                                stem=stem,
-                                save_dir=sample_dir,
-                            )
-
-                            if idx == n_samples:
-                                break
-
-                            idx += 1
+                if (i+1) % save_every == 0:
+                    for cell, sample in zip(bulk_cells, bulk_samples):
+                        grid = np.array(sample[..., 0])
+                        stem = "ann_{}".format(idx)
+                        self.dataset.write_sample(
+                            cell=cell,
+                            grid=sample,
+                            stem=stem,
+                            save_dir=sample_dir,
+                        )
+                        idx += 1
 
             print("Done")
+
 
     def interpolate_samples(self, *, sample_dir, checkpoint, n_samples):
         saver = tf.train.Saver(var_list=self.vars_to_save, max_to_keep=1)

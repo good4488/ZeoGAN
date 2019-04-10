@@ -1,0 +1,32 @@
+--dataset_path                      # path of the input grids(voxels)
+--device       1                    # gpu device number
+--logdir                            # save path
+--z_size       1024
+--voxel_size   32
+--rate         0.5
+--move         True
+--rotate       True
+--invert       True
+--energy_limit -4000 5000
+--energy_scale -4000 5000
+--cell_length_scale 0.0 150.0
+--save_every     1000               # save frequency
+--batch_size     32
+--bottom_size    4
+--bottom_filters 256
+--top_size       4
+--filter_unit    32
+--d_learning_rate 1e-4
+--g_learning_rate 1e-4
+--minibatch                False
+--minibatch_kernel_size    256
+--minibatch_dim_per_kernel 5
+--l2_loss False
+--train_gen_per_disc 1
+--n_critics 5
+--gp_lambda 10
+--feature_matching True
+--in_temper 298.0
+--user_desired True                 # user-desired generation
+--user_range 18 22                  # user-desired Qst range
+--restore_ckpt                      # load pre-trained parameters

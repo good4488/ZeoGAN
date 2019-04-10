@@ -79,6 +79,8 @@ def main():
         feature_matching=args.feature_matching,
         n_critics=args.n_critics,
         gp_lambda=args.gp_lambda,
+        user_desired=args.user_desired,
+        user_range=args.user_range,
     )
 
     if gen_args.type == "interp":
