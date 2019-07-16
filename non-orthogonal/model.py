@@ -71,10 +71,25 @@ class Generator:
                     x, training=self.training, global_norm=False)
             x = tf.nn.relu(x)
             # Final layer, no batchnorm.
-            x = dense(x, units=3, use_bias=True, name="c_logits")
+            x = dense(x, units=9, use_bias=True, name="c_all")
 
-            self.c_logits = x
-            self.c_outputs = tf.nn.sigmoid(x, name="c_outputs")
+            with tf.name_scope("c_outpus"):
+                a = x[:, 0:3]
+                b = x[:, 3:6]
+                c = x[:, 6:9]
+
+                def dot(u, v):
+                    # Numerically stable.
+                    return tf.reduce_sum(u*v, axis=1)
+
+                aa = dot(a, a)
+                bb = dot(b, b)
+                cc = dot(c, c)
+                bc = dot(b, c)
+                ca = dot(c, a)
+                ab = dot(a, b)
+
+                self.c_outputs = tf.stack([aa, bb, cc, bc, ca, ab], axis=1)
 
         # Restore bottom end.
         x = saved_x
@@ -178,10 +193,25 @@ class Discriminator:
                     x, training=self.training, global_norm=False)
             x = tf.nn.relu(x)
             # Final layer, no batchnorm.
-            x = dense(x, units=3, use_bias=True, name="c_logits")
+            x = dense(x, units=9, use_bias=True, name="c_all")
 
-            self.c_logits = x
-            self.c_outputs = tf.nn.sigmoid(x, name="c_outputs")
+            with tf.name_scope("c_outpus"):
+                a = x[:, 0:3]
+                b = x[:, 3:6]
+                c = x[:, 6:9]
+
+                def dot(u, v):
+                    # Numerically stable.
+                    return tf.reduce_sum(u*v, axis=1)
+
+                aa = dot(a, a)
+                bb = dot(b, b)
+                cc = dot(c, c)
+                bc = dot(b, c)
+                ca = dot(c, a)
+                ab = dot(a, b)
+
+                self.c_outputs = tf.stack([aa, bb, cc, bc, ca, ab], axis=1)
 
 
 class ZeoGAN:
@@ -311,6 +341,15 @@ class ZeoGAN:
         weight_cell_real = 1.0
         weight_cell_fake = 0.1
 
+        #mse = tf.keras.losses.MeanSquaredError()
+        def mse(u,v):
+            loss = tf.reduce_sum(tf.square(u-v), axis=1)
+            loss = tf.reduce_mean(loss)
+            return loss
+
+
+        print("SIZE:", self.next_data[0].shape)
+
         with tf.variable_scope("loss/gradient"):
             gradients, = tf.gradients(
                              self.discriminator_interp.outputs,
@@ -330,27 +369,15 @@ class ZeoGAN:
             fake_loss = tf.reduce_mean(fake_logits)
 
         with tf.variable_scope("loss/real_cell"):
-            real_c_logits = self.discriminator_real.c_logits
             real_c_outputs = self.discriminator_real.c_outputs
-
-            real_c_loss = tf.nn.sigmoid_cross_entropy_with_logits(
-                              labels=self.next_data[0],
-                              logits=real_c_logits,
-                          )
-            real_c_loss = tf.reduce_mean(real_c_loss)
+            real_c_loss = mse(self.next_data[0], real_c_outputs)
 
             real_c_abs_diff = tf.abs(real_c_outputs-self.next_data[0])
             real_c_abs_diff = tf.reduce_mean(real_c_abs_diff)
 
         with tf.variable_scope("loss/fake_cell"):
-            fake_c_logits = self.discriminator_fake.c_logits
             fake_c_outputs = self.discriminator_fake.c_outputs
-
-            fake_c_loss = tf.nn.sigmoid_cross_entropy_with_logits(
-                              labels=fake_c_outputs,
-                              logits=self.generator.c_logits,
-                          )
-            fake_c_loss = tf.reduce_mean(fake_c_loss)
+            fake_c_loss = mse(fake_c_outputs, self.generator.c_outputs)
 
             fake_c_abs_diff = tf.abs(fake_c_outputs-self.generator.c_outputs)
             fake_c_abs_diff = tf.reduce_mean(fake_c_abs_diff)
@@ -750,7 +777,7 @@ class ZeoGAN:
             batch_size = self.batch_size
             n_iters = math.ceil(n_samples / batch_size)
 
-            bulk_cells = np.zeros([save_every*batch_size, 3], dtype=np.float32)
+            bulk_cells = np.zeros([save_every*batch_size, 6], dtype=np.float32)
             bulk_samples = np.zeros([save_every*batch_size, 32, 32, 32, 3], dtype=np.float32)
             idx = 0
 
