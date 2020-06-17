@@ -1,6 +1,6 @@
---dataset_path                      # path of the input grids(voxels)
---device       1                    # gpu device number
---logdir                            # log path
+--dataset_path ./test_input_shapes
+--device       2
+--logdir       ./test_log
 --z_size       1024
 --voxel_size   32
 --rate         0.5
@@ -10,7 +10,7 @@
 --energy_limit -4000 5000
 --energy_scale -4000 5000
 --cell_length_scale 0.0 150.0
---save_every     1000               # frequency of saving checkpoints
+--save_every     1000
 --batch_size     32
 --bottom_size    4
 --bottom_filters 256
@@ -27,6 +27,6 @@
 --gp_lambda 10
 --feature_matching True
 --in_temper 298.0
---user_desired False                # non-user-desired generation
+--user_desired False
 --user_range 18 22
---restore_ckpt                      # load pre-trained parameters
+#--restore_ckpt
